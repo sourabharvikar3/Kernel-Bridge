@@ -23,7 +23,8 @@
 #include "SymParser.h"
 
 #include <PTE.h>
-#include "Registers.h"
+#include <Registers.h>
+#include <VMX.h>
 
 #include <intrin.h>
 
@@ -102,14 +103,14 @@ void TranslationTest(PVOID Address)
         //Pte.x64.Page4Kb.AVL = 0b101; // Trigger CoW
         //VirtMem::WriteQword(VirtPte, Pte.x64.Value);
 
-        WdkTypes::PVOID PhysicalAddress = PFN_TO_PAGE(Pte.x64.Page4Kb.PhysicalPageBase) + Va.x64.NonPageSize.Page4Kb.PageOffset;
+        WdkTypes::PVOID PhysicalAddress = PFN_TO_PAGE(Pte.x64.Page4Kb.PhysicalPageFrameNumber) + Va.x64.NonPageSize.Page4Kb.PageOffset;
         WdkTypes::PVOID ValidPhysicalAddress = PhysMem::GetPhysAddress(Va.Value);
         printf("PA = 0x%llX, VPA = 0x%llX\n", PhysicalAddress, ValidPhysicalAddress);
 
         //PULONG KMem = (PULONG)Address;
         //*KMem = *KMem;
 
-        PhysicalAddress = PFN_TO_PAGE(Pte.x64.Page4Kb.PhysicalPageBase) + Va.x64.NonPageSize.Page4Kb.PageOffset;
+        PhysicalAddress = PFN_TO_PAGE(Pte.x64.Page4Kb.PhysicalPageFrameNumber) + Va.x64.NonPageSize.Page4Kb.PageOffset;
         ValidPhysicalAddress = PhysMem::GetPhysAddress(Va.Value);
         printf("PA = 0x%llX, VPA = 0x%llX\n", PhysicalAddress, ValidPhysicalAddress);
 
@@ -260,38 +261,185 @@ VOID ThreadingTests()
     }
 }
 
+void* GetFuncPtr(const void* Func)
+{
+    if (!Func) return nullptr;
+    const auto* FuncDataPtr = reinterpret_cast<const unsigned char*>(Func);
+    if (*FuncDataPtr == 0xE9)
+    {
+        auto Offset = *reinterpret_cast<const int*>(FuncDataPtr + 1);
+        return const_cast<unsigned char*>((FuncDataPtr + 5) + Offset);
+    }
+    else
+    {
+        return const_cast<void*>(Func);
+    }
+}
+
+#pragma section(".hidden", read, execute, nopage)
+__declspec(code_seg(".hidden")) unsigned int HiddenFunc()
+{
+    printf("Called from hidden func!\n");
+    for (unsigned int i = 0; i < 100; ++i)
+    {
+        volatile BYTE* Self = reinterpret_cast<PBYTE>(GetFuncPtr(HiddenFunc));
+        *Self = 0x55;
+    }
+    return 0x1EE7C0DE;
+}
+
+VOID TestHvPageInterception()
+{
+    using namespace Hypervisor;
+    using namespace PhysicalMemory;
+
+    constexpr unsigned int PageSize = 4096;
+
+    volatile PBYTE Read = reinterpret_cast<PBYTE>(VirtualAlloc(NULL, PageSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+    volatile PBYTE Write = reinterpret_cast<PBYTE>(VirtualAlloc(NULL, PageSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+    volatile PBYTE WriteExecute = reinterpret_cast<PBYTE>(VirtualAlloc(NULL, PageSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+    volatile PBYTE Execute = reinterpret_cast<PBYTE>(GetFuncPtr(HiddenFunc));
+
+    __assume(Read != 0);
+    __assume(Write != 0);
+    __assume(WriteExecute != 0);
+
+    VirtualLock(Read, PageSize);
+    VirtualLock(Write, PageSize);
+    VirtualLock(Execute, PageSize);
+    VirtualLock(WriteExecute, PageSize);
+
+    memset(Read, 0xFF, PageSize);
+    memset(Write, 0xEE, PageSize);
+    memcpy(WriteExecute, Execute, PageSize);
+
+    DWORD OldProtect = 0;
+    VirtualProtect(Execute, PageSize, PAGE_EXECUTE_READWRITE, &OldProtect);
+    *Execute = *Execute;
+
+    WdkTypes::PVOID64 ReadPa = 0, WritePa = 0, WriteExecutePa = 0, ExecutePa = 0;
+    KbGetPhysicalAddress(NULL, reinterpret_cast<WdkTypes::PVOID>(Read), &ReadPa);
+    KbGetPhysicalAddress(NULL, reinterpret_cast<WdkTypes::PVOID>(Write), &WritePa);
+    KbGetPhysicalAddress(NULL, reinterpret_cast<WdkTypes::PVOID>(WriteExecute), &WriteExecutePa);
+    KbGetPhysicalAddress(NULL, reinterpret_cast<WdkTypes::PVOID>(Execute), &ExecutePa);
+    
+    printf("Original bytes: 0x%X\n", static_cast<unsigned int>(*Execute));
+
+    KbVmmInterceptPage(ExecutePa, ReadPa, WritePa, ExecutePa, ExecutePa, WriteExecutePa);    
+    printf("Bytes after intercept: 0x%X\n", static_cast<unsigned int>(*Execute));
+    *Execute = 0x40;
+    HiddenFunc();
+    printf("Bytes after call: 0x%X\n", static_cast<unsigned int>(*Execute));
+    printf("Write-interceptor: W:0x%X WX:0x%X\n", static_cast<unsigned int>(*Write), static_cast<unsigned int>(*WriteExecute));
+    KbVmmDeinterceptPage(ExecutePa);
+
+    printf("Bytes after deintercept: 0x%X\n", static_cast<unsigned int>(*Execute));
+
+    VirtualUnlock(Execute, PageSize);
+    VirtualUnlock(Write, PageSize);
+    VirtualUnlock(Read, PageSize);
+
+    VirtualFree(Write, 0, MEM_RELEASE);
+    VirtualFree(Read, 0, MEM_RELEASE);
+}
+
+WdkTypes::PVOID GetPhysAddr(OPTIONAL WdkTypes::PEPROCESS Process, PVOID VirtualAddress)
+{
+    using namespace PhysicalMemory;
+    WdkTypes::PVOID64 Pa = 0;
+    KbGetPhysicalAddress(Process, reinterpret_cast<WdkTypes::PVOID>(VirtualAddress), &Pa);
+    return Pa;
+}
+
+VOID VirtualMemoryTests()
+{
+    using namespace Processes::MemoryManagement;
+
+    HMODULE hModule = GetModuleHandle(L"ntdll.dll");
+    __assume(hModule != 0);
+    PVOID Address = GetProcAddress(hModule, "NtTestAlert");
+
+    printf("NtTestAlert: VA:%p, PA:0x%I64X\n", Address, GetPhysAddr(NULL, Address));
+    KbTriggerCopyOnWrite(0, reinterpret_cast<WdkTypes::PVOID>(Address));
+    printf("NtTestAlert: CoW-PA:0x%I64X\n", GetPhysAddr(NULL, Address));
+
+    KbTriggerCopyOnWrite(0, reinterpret_cast<WdkTypes::PVOID>(Address));
+    printf("NtTestAlert: Double CoW-PA:0x%I64X\n", GetPhysAddr(NULL, Address));
+
+    for (unsigned long long i = 0; i < 100000; ++i)
+    {
+        KbTriggerCopyOnWrite(0, reinterpret_cast<WdkTypes::PVOID>(Address) + i * 4096ull);
+    }
+}
+
 VOID RunAllTests()
 {
-    ThreadingTests();
+    VirtualMemoryTests();
     return;
+
+    //ThreadingTests();
+    //return;
 
 #ifdef FLT_TEST
     TestObCallbacks();
 #endif
 
-    RunTests();
-    RandomRpmTest();
+    //RunTests();
+    //RandomRpmTest();
 
-    PVOID Addr = GetProcAddress(GetModuleHandle(L"kernel32.dll"), "SetLastError");
-    TranslationTest(Addr);
+    //PVOID Addr = GetProcAddress(GetModuleHandle(L"kernel32.dll"), "SetLastError");
+    //TranslationTest(Addr);
 
-    if (false && Hypervisor::KbVmmEnable()) {
+    if (Hypervisor::KbVmmEnable())
+    {
         printf("VMM enabled!\r\n");
-        while (true) {
-            print_cpuid();
-            Sleep(1000);
+
+        TestHvPageInterception();
+
+        printf(
+            "Commands:\n"
+            "  exit: disable the hypervisor and exit\n"
+        );
+        while (true)
+        {
+            std::wstring Command;
+            std::wcin >> Command;
+            if (Command == L"exit")
+            {
+                break;
+            }
+            else
+            {
+                printf("Unknown command!\n");
+            }
         }
         Hypervisor::KbVmmDisable();
         printf("VMM disabled!\r\n");
         print_cpuid();
     }
-    else {
+    else
+    {
         printf("Unable to start VMM!\r\n");
     }
 }
 
+std::wstring GetCurrentFolder()
+{
+    WCHAR Path[MAX_PATH] = {};
+    DWORD PathLength = ARRAYSIZE(Path);
+    BOOL Status = QueryFullProcessImageName(GetCurrentProcess(), 0, Path, &PathLength);
+    return Status ? std::wstring(Path, PathLength) : std::wstring();
+}
+
 int main()
 {
+    std::wstring CurrentFolder = GetCurrentFolder();
+    if (CurrentFolder.empty())
+    {
+        printf("Unable to determine current directory!\n");
+        return 0;
+    }
+
     printf("[Kernel-Tests]: PID: %i, TID: %i\r\n", GetCurrentProcessId(), GetCurrentThreadId());
 
     if (KbLoader::KbLoadAsFilter(
@@ -301,7 +449,7 @@ int main()
         RunAllTests();
         KbLoader::KbUnload();
     } else {
-        std::wcout << L"Unable to load driver!" << std::endl;
+        std::wcout << L"Unable to load driver! LastError: 0x" << std::hex << GetLastError() << std::endl;
     }
 
     std::wcout << L"Press any key to exit..." << std::endl;

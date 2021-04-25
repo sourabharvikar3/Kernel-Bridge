@@ -20,7 +20,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="API\CommPort.cpp" />
-    <ClCompile Include="API\CppSupport.cpp" />
+    <ClCompile Include="API\CppSupport.cpp">
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</WholeProgramOptimization>
+    </ClCompile>
     <ClCompile Include="API\CPU.cpp" />
     <ClCompile Include="API\Hypervisor.cpp" />
     <ClCompile Include="API\Importer.cpp" />
@@ -28,13 +30,14 @@
     <ClCompile Include="API\KernelShells.cpp" />
     <ClCompile Include="API\MemoryUtils.cpp" />
     <ClCompile Include="API\ObCallbacks.cpp" />
+    <ClCompile Include="API\Callable.cpp" />
     <ClCompile Include="API\OSVersion.cpp" />
-    <ClCompile Include="API\PCI.cpp" />
     <ClCompile Include="API\ProcessesUtils.cpp" />
     <ClCompile Include="API\PsCallbacks.cpp" />
     <ClCompile Include="API\PteUtils.cpp" />
     <ClCompile Include="API\SectionsUtils.cpp" />
     <ClCompile Include="API\Signatures.cpp" />
+    <ClCompile Include="API\Stopwatch.cpp" />
     <ClCompile Include="Kernel-Bridge\DriverEvents.cpp" />
     <ClCompile Include="Kernel-Bridge\FilterCallbacks.cpp" />
     <ClCompile Include="Kernel-Bridge\IOCTLHandlers.cpp" />
@@ -51,7 +54,7 @@
     <Configuration>Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">Win32</Platform>
     <RootNamespace>Kernel_Bridge</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.18362.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.19041.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -63,6 +66,7 @@
     <DriverTargetPlatform>Desktop</DriverTargetPlatform>
     <_NT_TARGET_VERSION>0x0601</_NT_TARGET_VERSION>
     <SpectreMitigation>false</SpectreMitigation>
+    <Driver_SpectreMitigation>false</Driver_SpectreMitigation>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <TargetVersion>Windows7</TargetVersion>
@@ -73,6 +77,7 @@
     <DriverTargetPlatform>Desktop</DriverTargetPlatform>
     <_NT_TARGET_VERSION>0x0601</_NT_TARGET_VERSION>
     <SpectreMitigation>false</SpectreMitigation>
+    <Driver_SpectreMitigation>false</Driver_SpectreMitigation>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <TargetVersion>Windows7</TargetVersion>
@@ -83,6 +88,7 @@
     <DriverTargetPlatform>Desktop</DriverTargetPlatform>
     <_NT_TARGET_VERSION>0x0601</_NT_TARGET_VERSION>
     <SpectreMitigation>false</SpectreMitigation>
+    <Driver_SpectreMitigation>false</Driver_SpectreMitigation>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <TargetVersion>Windows7</TargetVersion>
@@ -93,12 +99,17 @@
     <DriverTargetPlatform>Desktop</DriverTargetPlatform>
     <_NT_TARGET_VERSION>0x0601</_NT_TARGET_VERSION>
     <SpectreMitigation>false</SpectreMitigation>
+    <Driver_SpectreMitigation>false</Driver_SpectreMitigation>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings" />
   <ImportGroup Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'" />
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -135,15 +146,21 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <Link>
-      <AdditionalDependencies>fltmgr.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>fltmgr.lib;HookLib.lib;Zydis.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>Exports.def</ModuleDefinitionFile>
       <AdditionalOptions>/INTEGRITYCHECK %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalLibraryDirectories>$(SolutionDir)DebugKernel\;$(SolutionDir)HookLib\HookLib\Zydis\msvc\bin\DebugX86Kernel\</AdditionalLibraryDirectories>
     </Link>
     <ClCompile>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <SupportJustMyCode>false</SupportJustMyCode>
       <EnablePREfast>false</EnablePREfast>
       <PreprocessorDefinitions>POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ExceptionHandling>false</ExceptionHandling>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>..\HookLib\HookLib\HookLib\;..\HookLib\HookLib\Zydis\include\;$(IntDir);%(AdditionalIncludeDirectories);$(ProjectDir)</AdditionalIncludeDirectories>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <PostBuildEvent>
       <Command>makecab /f ../x32-debug.ddf</Command>
@@ -154,10 +171,11 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <Link>
-      <AdditionalDependencies>fltmgr.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>fltmgr.lib;HookLib.lib;Zydis.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>Exports.def</ModuleDefinitionFile>
       <AdditionalOptions>/INTEGRITYCHECK %(AdditionalOptions)</AdditionalOptions>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <AdditionalLibraryDirectories>$(SolutionDir)ReleaseKernel\;$(SolutionDir)HookLib\HookLib\Zydis\msvc\bin\ReleaseX86Kernel\</AdditionalLibraryDirectories>
     </Link>
     <ClCompile>
       <LanguageStandard>stdcpplatest</LanguageStandard>
@@ -169,6 +187,12 @@
       <PreprocessorDefinitions>POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <IntelJCCErratum>true</IntelJCCErratum>
       <WholeProgramOptimization>true</WholeProgramOptimization>
+      <ExceptionHandling>false</ExceptionHandling>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>..\HookLib\HookLib\HookLib\;..\HookLib\HookLib\Zydis\include\;$(IntDir);%(AdditionalIncludeDirectories);$(ProjectDir)</AdditionalIncludeDirectories>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <PostBuildEvent>
       <Command>makecab /f ../x32-release.ddf</Command>
@@ -179,15 +203,21 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <AdditionalDependencies>fltmgr.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>fltmgr.lib;HookLib.lib;Zydis.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>Exports.def</ModuleDefinitionFile>
       <AdditionalOptions>/INTEGRITYCHECK %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalLibraryDirectories>$(SolutionDir)$(Platform)\DebugKernel\;$(SolutionDir)HookLib\HookLib\Zydis\msvc\bin\DebugX64Kernel\</AdditionalLibraryDirectories>
     </Link>
     <ClCompile>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <SupportJustMyCode>false</SupportJustMyCode>
       <EnablePREfast>false</EnablePREfast>
       <PreprocessorDefinitions>POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ExceptionHandling>false</ExceptionHandling>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>..\HookLib\HookLib\HookLib\;..\HookLib\HookLib\Zydis\include\;$(IntDir);%(AdditionalIncludeDirectories);$(ProjectDir)</AdditionalIncludeDirectories>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <PostBuildEvent>
       <Command>makecab /f ../x64-debug.ddf</Command>
@@ -195,10 +225,11 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>
-      <AdditionalDependencies>fltmgr.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>fltmgr.lib;HookLib.lib;Zydis.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>Exports.def</ModuleDefinitionFile>
       <AdditionalOptions>/INTEGRITYCHECK %(AdditionalOptions)</AdditionalOptions>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <AdditionalLibraryDirectories>$(SolutionDir)$(Platform)\ReleaseKernel;$(SolutionDir)HookLib\HookLib\Zydis\msvc\bin\ReleaseX64Kernel\</AdditionalLibraryDirectories>
     </Link>
     <ClCompile>
       <LanguageStandard>stdcpplatest</LanguageStandard>
@@ -209,7 +240,13 @@
       <OmitFramePointers>true</OmitFramePointers>
       <PreprocessorDefinitions>POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <IntelJCCErratum>true</IntelJCCErratum>
+      <ExceptionHandling>false</ExceptionHandling>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>..\HookLib\HookLib\HookLib\;..\HookLib\HookLib\Zydis\include\;$(IntDir);%(AdditionalIncludeDirectories);$(ProjectDir)</AdditionalIncludeDirectories>
       <WholeProgramOptimization>true</WholeProgramOptimization>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <PostBuildEvent>
       <Command>makecab /f ../x64-release.ddf</Command>
@@ -220,11 +257,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\CommonTypes\CPUID.h" />
+    <ClInclude Include="..\CommonTypes\Hyper-V.h" />
+    <ClInclude Include="..\CommonTypes\Interrupts.h" />
+    <ClInclude Include="..\CommonTypes\MSR.h" />
     <ClInclude Include="..\CommonTypes\Segmentation.h" />
     <ClInclude Include="..\CommonTypes\PTE.h" />
     <ClInclude Include="..\CommonTypes\Registers.h" />
     <ClInclude Include="..\CommonTypes\SVM.h" />
     <ClInclude Include="..\CommonTypes\VMX.h" />
+    <ClInclude Include="..\HookLib\HookLib\HookLib\HookLib.h" />
     <ClInclude Include="..\SharedTypes\CtlTypes.h" />
     <ClInclude Include="..\SharedTypes\FltTypes.h" />
     <ClInclude Include="..\SharedTypes\WdkTypes.h" />
@@ -239,14 +280,15 @@
     <ClInclude Include="API\Locks.h" />
     <ClInclude Include="API\MemoryUtils.h" />
     <ClInclude Include="API\ObCallbacks.h" />
+    <ClInclude Include="API\Callable.h" />
     <ClInclude Include="API\OSVersion.h" />
-    <ClInclude Include="API\PCI.h" />
     <ClInclude Include="API\ProcessesUtils.h" />
     <ClInclude Include="API\PsCallbacks.h" />
     <ClInclude Include="API\PteUtils.h" />
     <ClInclude Include="API\RAII.h" />
     <ClInclude Include="API\SectionsUtils.h" />
     <ClInclude Include="API\Signatures.h" />
+    <ClInclude Include="API\Stopwatch.h" />
     <ClInclude Include="API\StringsAPI.h" />
     <ClInclude Include="Kernel-Bridge\DriverEvents.h" />
     <ClInclude Include="Kernel-Bridge\FilterCallbacks.h" />
